@@ -3,7 +3,7 @@ kind: CronJob
 metadata:
   name: consul-cronjob-snapshot
 spec:
-  schedule: "*/59 * * * *"
+  schedule: "*/30 * * * *"
   jobTemplate:
     spec:
       template:

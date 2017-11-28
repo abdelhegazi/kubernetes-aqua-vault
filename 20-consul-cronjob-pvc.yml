@@ -1,12 +1,24 @@
+Kind: List
 apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  annotations:
-    volume.beta.kubernetes.io/storage-class: heketi
-  name: consulvault-pvc1
-spec:
-  accessModes:
-  - ReadWriteMany
-  resources:
-    requests:
-      storage: 2Gi
+items:
+
+- apiVersion: storage.k8s.io/v1beta1
+  kind: StorageClass
+  metadata:
+    name: heketi
+    annotations:
+      storageclass.beta.kubernetes.io/is-default-class: "true"
+  provisioner: kubernetes.io/glusterfs
+
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+      volume.beta.kubernetes.io/storage-class: heketi
+    name: consulvault-pvc1
+  spec:
+    accessModes:
+    - ReadWriteMany
+    resources:
+      requests:
+        storage: 2Gi
