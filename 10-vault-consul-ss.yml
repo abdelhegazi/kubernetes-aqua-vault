@@ -1,0 +1,180 @@
+kind: List
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: consul
+    namespace: aqua-security
+  data:
+    config.json: |-
+      {
+        "server": true,
+        "enable_debug": true
+      }
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: vault
+    namespace: aqua-security
+  data:
+    config.hcl: |-
+      storage "consul" {
+        address = "127.0.0.1:8500" 
+        check_timeout = "5s"
+        path = "vault/"
+        scheme="http"
+      }
+      listener "tcp" {
+        address = "0.0.0.0:8200"
+        tls_disable = 1
+      }
+      disable_mlock = true
+
+  # A headless service to create DNS records
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      service.alpha.kubernetes.io/tolerate-unready-endpoints: "consulvault"
+    name: consulvault
+    labels:
+      app: consulvault
+  spec:
+    ports:
+    # vault
+    - port: 8200
+      targetPort: 8200
+      name: vault
+    - port: 8201
+      targetPort: 8201
+      name: vault-cluster
+    - port: 8125
+      targetPort: 8125
+      name: vault-telemetry
+    # consul
+    - name: http
+      port: 8500
+      targetPort: 8500
+    - name: rpc
+      port: 8400
+      targetPort: 8400
+    - name: serflan-udp
+      port: 8301
+      targetPort: 8301
+      protocol: "UDP"
+    - name: serflan-tcp
+      port: 8301
+      targetPort: 8301
+      protocol: "TCP"    
+    - name: serfwan
+      port: 8302
+      targetPort: 8302
+    - name: server
+      port: 8300
+      targetPort: 8300
+    - name: consuldns
+      port: 8600
+      targetPort: 8600
+    # *.consulvault.aqua-security.svc.cluster.local
+    selector:
+      app: consulvault
+
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
+  metadata:
+    name: consulvault
+  spec:
+    serviceName: "consulvault"
+    replicas: 3
+    template:
+      metadata:
+        labels:
+          app: consulvault
+        annotations:
+          pod.alpha.kubernetes.io/initialized: "consul-vault"
+      spec:
+        serviceAccount: aqua-account
+        nodeSelector:
+          region: infra
+        volumes:
+        - name: vault-volume
+          configMap:
+            name: vault
+        - name: consul-volume
+          configMap:
+            name: consul
+        
+        containers:
+        # vault container
+        - name: vault
+          image: 172.30.80.255:5000/aqua-security/vault:0.9.0
+          command: ["/bin/vault", "server", "-config", "/vault/config/config.hcl"]     
+          imagePullPolicy: Always
+          volumeMounts:
+          - name: vault-volume
+            mountPath: /vault/config/
+          cap_add:
+          - IPC_LOCK     # enables mlock to stop memory being swapped to disk
+          - CAP_SETFCAP
+          ports:
+          - containerPort: 8200
+            name: vault
+          - containerPort: 8201
+            name: vault-cluster
+          - containerPort: 8125
+            name: vault-telemetry
+        # consul container
+        - name: consul
+          image: 172.30.80.255:5000/aqua-security/consul:1.0.1
+          imagePullPolicy: Always
+          env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          args:
+            - "agent"
+            - "-advertise=$(POD_IP)"
+            - "-bind=0.0.0.0"
+            - "-bootstrap-expect=3"
+            - "-server"
+            - "-client=0.0.0.0"
+            - "-retry-join=consulvault"
+            - "-config-file=/consul/config/config.json"
+            - "-datacenter=staging"
+            - "-data-dir=/consul/data"
+            - "-domain=cluster.local"
+            - "-ui"
+            - "-disable-host-node-id"
+          volumeMounts:
+            - name: consul-volume
+              mountPath: /consul/config/
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "consul leave"]
+          ports:
+            - containerPort: 8500
+              name: ui-port
+            - containerPort: 8400
+              name: alt-port
+            - containerPort: 53
+              name: udp-port
+            - containerPort: 443
+              name: https-port
+            - containerPort: 8080
+              name: http-port
+            - containerPort: 8301
+              name: serflan-tcp
+              protocol: TCP
+            - containerPort: 8301
+              name: serflan-udp
+              protocol: UDP
+            - containerPort: 8302
+              name: serfwan
+            - containerPort: 8600
+              name: consuldns
+            - containerPort: 8300
+              name: server
